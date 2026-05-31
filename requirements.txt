@@ -1,0 +1,13 @@
+anthropic
+yfinance
+pandas
+numpy
+requests
+feedparser
+fredapi
+python-dotenv
+streamlit
+plotly
+schedule
+tabulate
+rich
