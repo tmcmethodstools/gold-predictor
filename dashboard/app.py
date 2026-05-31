@@ -266,6 +266,115 @@ else:
     else:
         st.info("No reports available yet. Run the evening script to generate one.")
 
+# ── Section 6: Update Actual Open Price ───────────────────────────────────
+st.divider()
+st.header("✏️ Update Actual Open Price")
+st.caption("Use this every morning to record the actual MCX Gold opening price.")
+
+with st.expander("Open update form"):
+    # Simple password protection via Streamlit secrets or hardcoded
+    try:
+        import streamlit as _st
+        update_password = _st.secrets.get("UPDATE_PASSWORD", "gold2026")
+    except Exception:
+        update_password = os.environ.get("UPDATE_PASSWORD", "gold2026")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        upd_date = st.date_input(
+            "Prediction date",
+            value=datetime.now().date(),
+            help="The date of the prediction (yesterday's date usually)",
+        )
+    with col2:
+        upd_price = st.number_input(
+            "Actual MCX open price (INR/10g)",
+            min_value=50000.0,
+            max_value=300000.0,
+            value=130000.0,
+            step=100.0,
+            help="Check mcxindia.com for the Gold June futures opening price",
+        )
+    with col3:
+        upd_password = st.text_input("Password", type="password", help="Required to submit")
+
+    if st.button("Submit Actual Price", type="primary"):
+        if upd_password != update_password:
+            st.error("Incorrect password.")
+        else:
+            date_str = upd_date.strftime("%Y-%m-%d")
+            # Update Supabase directly
+            url, key = None, None
+            try:
+                url = st.secrets.get("SUPABASE_URL", "")
+                key = st.secrets.get("SUPABASE_KEY", "")
+            except Exception:
+                import os as _os
+                url = _os.environ.get("SUPABASE_URL", "")
+                key = _os.environ.get("SUPABASE_KEY", "")
+
+            if not url or not key:
+                st.error("Supabase not configured.")
+            else:
+                import requests as _req
+                from datetime import datetime as _dt
+
+                # First fetch the prediction to compute accuracy
+                headers = {
+                    "apikey": key,
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                }
+                fetch = _req.get(
+                    f"{url}/rest/v1/predictions?date=eq.{date_str}&select=*",
+                    headers=headers, timeout=10,
+                )
+                rows = fetch.json() if fetch.status_code == 200 else []
+
+                if not rows:
+                    st.error(f"No prediction found for {date_str}. Run the evening script first.")
+                else:
+                    pred = rows[0]
+                    mcx_close = pred.get("mcx_close")
+                    signal = pred.get("signal")
+                    pred_low = pred.get("predicted_low")
+                    pred_high = pred.get("predicted_high")
+
+                    actual_direction = "UP" if upd_price > mcx_close else "DOWN" if mcx_close else None
+                    direction_correct = None
+                    if signal == "BULLISH":
+                        direction_correct = 1 if actual_direction == "UP" else 0
+                    elif signal == "BEARISH":
+                        direction_correct = 1 if actual_direction == "DOWN" else 0
+
+                    in_range = None
+                    if pred_low and pred_high:
+                        in_range = 1 if pred_low <= upd_price <= pred_high else 0
+
+                    payload = {
+                        "actual_open": upd_price,
+                        "actual_direction": actual_direction,
+                        "direction_correct": direction_correct,
+                        "in_range": in_range,
+                    }
+                    resp = _req.patch(
+                        f"{url}/rest/v1/predictions?date=eq.{date_str}",
+                        headers=headers, json=payload, timeout=10,
+                    )
+
+                    if resp.status_code in (200, 204):
+                        result = "CORRECT" if direction_correct == 1 else "WRONG" if direction_correct == 0 else "N/A"
+                        in_range_txt = "Yes" if in_range == 1 else "No" if in_range == 0 else "N/A"
+                        st.success(
+                            f"Updated {date_str}!\n\n"
+                            f"Actual open: Rs.{int(upd_price):,}\n"
+                            f"Signal was: {signal} — Direction: {result}\n"
+                            f"In predicted range: {in_range_txt}"
+                        )
+                        st.rerun()
+                    else:
+                        st.error(f"Update failed: {resp.status_code} {resp.text[:100]}")
+
 # ── Footer ────────────────────────────────────────────────────────────────
 st.divider()
 st.caption(
